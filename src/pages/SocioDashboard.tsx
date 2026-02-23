@@ -2,14 +2,15 @@ import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { FolderOpen, LogOut, Plus, Loader2, Pencil } from "lucide-react";
+import { FolderOpen, LogOut, Plus, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import ProyectoCard from "@/components/socio/ProyectoCard";
 
 const SocioDashboard = () => {
   const { user, usuarioId, signOut } = useAuth();
@@ -38,9 +39,7 @@ const SocioDashboard = () => {
     setLoading(false);
   };
 
-  useEffect(() => {
-    fetchProyectos();
-  }, []);
+  useEffect(() => { fetchProyectos(); }, []);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -50,12 +49,9 @@ const SocioDashboard = () => {
 
     setSaving(true);
     const { error } = await supabase.from("proyectos").insert({
-      nombre,
-      descripcion: descripcion || null,
-      fecha_inicio: fechaInicio,
-      fecha_fin: fechaFin,
-      cupo_total: cupo,
-      cupo_disponible: cupo,
+      nombre, descripcion: descripcion || null,
+      fecha_inicio: fechaInicio, fecha_fin: fechaFin,
+      cupo_total: cupo, cupo_disponible: cupo,
       socio_usuario_id: usuarioId,
     });
 
@@ -168,25 +164,7 @@ const SocioDashboard = () => {
         ) : (
           <div className="grid gap-4">
             {proyectos.map(p => (
-              <Card key={p.proyecto_id}>
-                <CardContent className="flex items-center justify-between py-4">
-                  <div className="space-y-1">
-                    <p className="font-semibold">{p.nombre}</p>
-                    {p.descripcion && <p className="text-sm text-muted-foreground line-clamp-1">{p.descripcion}</p>}
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(p.fecha_inicio).toLocaleDateString("es-MX")} — {new Date(p.fecha_fin).toLocaleDateString("es-MX")}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant={p.cupo_disponible > 0 ? "default" : "destructive"}>
-                      {p.cupo_disponible}/{p.cupo_total}
-                    </Badge>
-                    <Button size="icon" variant="ghost" onClick={() => openEdit(p)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+              <ProyectoCard key={p.proyecto_id} proyecto={p} onEdit={openEdit} />
             ))}
           </div>
         )}
