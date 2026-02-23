@@ -11,3 +11,9 @@ verify_jwt = false
 
 [functions.register-user]
 verify_jwt = false
+
+[functions.validar-codigo]
+verify_jwt = false
+
+[functions.registrar-estudiante]
+verify_jwt = false

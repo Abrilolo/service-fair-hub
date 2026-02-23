@@ -10,6 +10,7 @@ import Login from "./pages/Login";
 import AdminDashboard from "./pages/AdminDashboard";
 import SocioDashboard from "./pages/SocioDashboard";
 import BecarioDashboard from "./pages/BecarioDashboard";
+import RegistroPublico from "./pages/RegistroPublico";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -48,6 +49,7 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
+            <Route path="/registro" element={<RegistroPublico />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
