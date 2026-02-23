@@ -272,9 +272,28 @@ export type Database = {
           },
         ]
       }
+      user_roles: {
+        Row: {
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
       usuarios: {
         Row: {
           activo: boolean
+          auth_id: string | null
           created_at: string
           email: string
           nombre: string
@@ -284,6 +303,7 @@ export type Database = {
         }
         Insert: {
           activo?: boolean
+          auth_id?: string | null
           created_at?: string
           email: string
           nombre: string
@@ -293,6 +313,7 @@ export type Database = {
         }
         Update: {
           activo?: boolean
+          auth_id?: string | null
           created_at?: string
           email?: string
           nombre?: string
@@ -307,7 +328,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_user_role: {
+        Args: { _user_id: string }
+        Returns: Database["public"]["Enums"]["app_role"]
+      }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "ADMIN" | "SOCIO" | "BECARIO"
