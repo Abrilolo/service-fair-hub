@@ -1,0 +1,10 @@
+project_id = "xqsbeirysuujnussnmfc"
+
+[functions.health]
+verify_jwt = false
+
+[functions.db-test]
+verify_jwt = false
+
+[functions.proyectos]
+verify_jwt = false
