@@ -83,7 +83,7 @@ Deno.serve(async (req) => {
       await adminClient.auth.admin.createUser({
         email,
         password,
-        email_confirm: false,
+        email_confirm: true,
       });
 
     if (authError) {
