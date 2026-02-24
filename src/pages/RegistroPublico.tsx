@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +16,6 @@ interface ProyectoInfo {
 
 const RegistroPublico = () => {
   const { toast } = useToast();
-  const navigate = useNavigate();
 
   // Step 1: Code validation
   const [codigo, setCodigo] = useState("");
@@ -87,12 +85,7 @@ const RegistroPublico = () => {
           variant: "destructive",
         });
       } else {
-        // Redirect to QR page with the token
-        if (data.qr_token) {
-          navigate(`/mi-qr?token=${data.qr_token}`);
-        } else {
-          setSuccess(data.proyecto_nombre || proyecto?.nombre || "el proyecto");
-        }
+        setSuccess(data.proyecto_nombre || proyecto?.nombre || "el proyecto");
       }
     } catch {
       toast({ title: "Error", description: "No se pudo conectar con el servidor", variant: "destructive" });
