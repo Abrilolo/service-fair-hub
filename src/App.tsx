@@ -11,6 +11,7 @@ import AdminDashboard from "./pages/AdminDashboard";
 import SocioDashboard from "./pages/SocioDashboard";
 import BecarioDashboard from "./pages/BecarioDashboard";
 import RegistroPublico from "./pages/RegistroPublico";
+import MiQR from "./pages/MiQR";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -50,6 +51,7 @@ const App = () => (
               }
             />
             <Route path="/registro" element={<RegistroPublico />} />
+            <Route path="/mi-qr" element={<MiQR />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </AuthProvider>
