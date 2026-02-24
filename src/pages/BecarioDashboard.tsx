@@ -30,12 +30,10 @@ const BecarioDashboard = () => {
   const { user, usuarioId, signOut } = useAuth();
   const { toast } = useToast();
 
-  // Scanner
   const [scanning, setScanning] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const scannerContainerId = "qr-reader";
 
-  // Processing
   const [processing, setProcessing] = useState(false);
   const [lastResult, setLastResult] = useState<{
     type: "success" | "error" | "warning";
@@ -43,7 +41,6 @@ const BecarioDashboard = () => {
     description: string;
   } | null>(null);
 
-  // Recents
   const [recents, setRecents] = useState<RecentCheckin[]>([]);
   const [recentsLoading, setRecentsLoading] = useState(true);
 
@@ -67,47 +64,39 @@ const BecarioDashboard = () => {
     setProcessing(true);
     setLastResult(null);
 
-    // 1. Find registration by qr_token
-    const { data: reg, error: regErr } = await supabase
-      .from("registros_proyecto")
-      .select("registro_id, estudiante_id, proyecto_id, estado, estudiantes(nombre, matricula, carrera), proyectos(nombre)")
+    // 1. Find student by qr_token (cast needed: qr_token not yet in generated types)
+    const result: any = await (supabase
+      .from("estudiantes") as any)
+      .select("estudiante_id, nombre, matricula, carrera")
       .eq("qr_token", qrToken)
       .maybeSingle();
+    const estudiante = result.data as { estudiante_id: string; nombre: string; matricula: string; carrera: string } | null;
+    const estErr = result.error;
 
-    if (regErr || !reg) {
-      setLastResult({ type: "error", title: "QR no válido", description: "No se encontró ningún registro con este código QR." });
+    if (estErr || !estudiante) {
+      setLastResult({ type: "error", title: "QR no válido", description: "No se encontró ningún estudiante con este código QR." });
       setProcessing(false);
       return;
     }
 
-    if (reg.estado !== "CONFIRMADO") {
-      setLastResult({ type: "warning", title: "Registro cancelado", description: "Este registro fue cancelado y no se puede hacer check-in." });
-      setProcessing(false);
-      return;
-    }
-
-    const est = reg.estudiantes as { nombre: string; matricula: string; carrera: string } | null;
-    const proy = reg.proyectos as { nombre: string } | null;
-
-    // 2. Check existing checkin
+    // 2. Check if student already has a checkin (global, not per project)
     const { data: existingCheckin } = await supabase
       .from("checkins")
       .select("checkin_id, estado")
-      .eq("estudiante_id", reg.estudiante_id)
-      .eq("proyecto_id", reg.proyecto_id)
+      .eq("estudiante_id", estudiante.estudiante_id)
       .maybeSingle();
 
     if (existingCheckin?.estado === "PRESENTE") {
       setLastResult({
         type: "warning",
         title: "Ya registrado",
-        description: `${est?.nombre} (${est?.matricula}) ya está marcado como PRESENTE en ${proy?.nombre}.`,
+        description: `${estudiante.nombre} (${estudiante.matricula}) ya está marcado como PRESENTE.`,
       });
       setProcessing(false);
       return;
     }
 
-    // 3. Upsert checkin as PRESENTE
+    // 3. Create or update checkin as PRESENTE
     if (existingCheckin) {
       await supabase
         .from("checkins")
@@ -117,8 +106,7 @@ const BecarioDashboard = () => {
       await supabase
         .from("checkins")
         .insert({
-          estudiante_id: reg.estudiante_id,
-          proyecto_id: reg.proyecto_id,
+          estudiante_id: estudiante.estudiante_id,
           estado: "PRESENTE",
           verificado_por_usuario_id: usuarioId,
         });
@@ -128,12 +116,11 @@ const BecarioDashboard = () => {
     await supabase.from("logs_evento").insert({
       tipo_evento: "checkin_qr",
       entidad: "checkins",
-      entidad_id: reg.estudiante_id,
+      entidad_id: estudiante.estudiante_id,
       actor_usuario_id: usuarioId,
       metadata: {
-        matricula: est?.matricula,
-        estudiante_nombre: est?.nombre,
-        proyecto_id: reg.proyecto_id,
+        matricula: estudiante.matricula,
+        estudiante_nombre: estudiante.nombre,
         estado: "PRESENTE",
         qr_token: qrToken,
       },
@@ -142,7 +129,7 @@ const BecarioDashboard = () => {
     setLastResult({
       type: "success",
       title: "✅ Presencia confirmada",
-      description: `${est?.nombre} (${est?.matricula}) — ${proy?.nombre}`,
+      description: `${estudiante.nombre} (${estudiante.matricula}) — ${estudiante.carrera}`,
     });
 
     fetchRecents();
@@ -162,7 +149,6 @@ const BecarioDashboard = () => {
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         async (decodedText) => {
-          // Stop scanner immediately after reading
           try {
             await scanner.stop();
             scannerRef.current = null;
@@ -170,7 +156,7 @@ const BecarioDashboard = () => {
           } catch { /* ignore */ }
           processQrToken(decodedText.trim());
         },
-        () => { /* ignore scan failures */ }
+        () => {}
       );
     } catch (err: unknown) {
       setScanning(false);
@@ -182,15 +168,12 @@ const BecarioDashboard = () => {
 
   const stopScanner = useCallback(async () => {
     if (scannerRef.current) {
-      try {
-        await scannerRef.current.stop();
-      } catch { /* ignore */ }
+      try { await scannerRef.current.stop(); } catch { /* ignore */ }
       scannerRef.current = null;
     }
     setScanning(false);
   }, []);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (scannerRef.current) {
@@ -201,7 +184,6 @@ const BecarioDashboard = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="border-b border-border bg-card">
         <div className="container mx-auto flex items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
@@ -220,7 +202,6 @@ const BecarioDashboard = () => {
       </header>
 
       <main className="container mx-auto space-y-6 px-6 py-8">
-        {/* QR Scanner */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -229,12 +210,9 @@ const BecarioDashboard = () => {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Scanner viewport */}
             <div
               id={scannerContainerId}
-              className={`mx-auto w-full max-w-sm overflow-hidden rounded-xl border-2 border-dashed border-border ${
-                scanning ? "border-primary" : ""
-              }`}
+              className={`mx-auto w-full max-w-sm overflow-hidden rounded-xl border-2 border-dashed border-border ${scanning ? "border-primary" : ""}`}
               style={{ minHeight: scanning ? 300 : 0 }}
             />
 
@@ -258,7 +236,6 @@ const BecarioDashboard = () => {
               </div>
             )}
 
-            {/* Result */}
             {lastResult && (
               <div
                 className={`rounded-lg border p-4 flex items-start gap-3 ${
@@ -292,7 +269,6 @@ const BecarioDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* Recent Checkins */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -313,25 +289,15 @@ const BecarioDashboard = () => {
             ) : (
               <div className="space-y-2">
                 {recents.map((ck) => (
-                  <div
-                    key={ck.checkin_id}
-                    className="flex items-center justify-between rounded-lg border p-3"
-                  >
+                  <div key={ck.checkin_id} className="flex items-center justify-between rounded-lg border p-3">
                     <div>
-                      <p className="font-medium">
-                        {ck.estudiantes?.nombre ?? "Desconocido"}
-                      </p>
+                      <p className="font-medium">{ck.estudiantes?.nombre ?? "Desconocido"}</p>
                       <p className="text-sm text-muted-foreground">
-                        {ck.estudiantes?.matricula ?? "—"} · {ck.proyectos?.nombre ?? "Sin proyecto"} ·{" "}
-                        {new Date(ck.fecha_hora).toLocaleString("es-MX", {
-                          dateStyle: "short",
-                          timeStyle: "short",
-                        })}
+                        {ck.estudiantes?.matricula ?? "—"} · {ck.proyectos?.nombre ?? "General"} ·{" "}
+                        {new Date(ck.fecha_hora).toLocaleString("es-MX", { dateStyle: "short", timeStyle: "short" })}
                       </p>
                     </div>
-                    <Badge variant={ck.estado === "PRESENTE" ? "default" : "secondary"}>
-                      {ck.estado}
-                    </Badge>
+                    <Badge variant={ck.estado === "PRESENTE" ? "default" : "secondary"}>{ck.estado}</Badge>
                   </div>
                 ))}
               </div>

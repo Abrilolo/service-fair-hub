@@ -1,71 +1,144 @@
-import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Loader2, QrCode, AlertTriangle } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Loader2, QrCode } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { QRCodeSVG } from "qrcode.react";
 
 const MiQR = () => {
-  const [searchParams] = useSearchParams();
-  const token = searchParams.get("token");
+  const { toast } = useToast();
 
-  const [loading, setLoading] = useState(true);
-  const [registro, setRegistro] = useState<{
-    estudiante_nombre: string;
-    matricula: string;
-    proyecto_nombre: string;
-    qr_token: string;
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // Form
+  const [matricula, setMatricula] = useState("");
+  const [nombre, setNombre] = useState("");
+  const [correo, setCorreo] = useState("");
+  const [carrera, setCarrera] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
-  useEffect(() => {
-    if (!token) {
-      setError("No se proporcionó un token válido.");
-      setLoading(false);
+  // Result
+  const [qrToken, setQrToken] = useState<string | null>(null);
+  const [studentName, setStudentName] = useState("");
+
+  // Lookup mode: student already registered
+  const [lookupMatricula, setLookupMatricula] = useState("");
+  const [lookingUp, setLookingUp] = useState(false);
+  const [mode, setMode] = useState<"choose" | "register" | "lookup" | "done">("choose");
+
+  const handleRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubmitting(true);
+
+    const trimmedMatricula = matricula.trim();
+    const token = crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase();
+
+    // Check if student already exists
+    const { data: existing } = await supabase
+      .from("estudiantes")
+      .select("qr_token, nombre" as any)
+      .eq("matricula", trimmedMatricula)
+      .maybeSingle() as { data: { qr_token: string | null; nombre: string } | null };
+
+    if (existing) {
+      if (existing.qr_token) {
+        setQrToken(existing.qr_token);
+        setStudentName(existing.nombre);
+        setMode("done");
+        setSubmitting(false);
+        return;
+      }
+      // Update with qr_token
+      const { error } = await supabase
+        .from("estudiantes")
+        .update({ qr_token: token } as any)
+        .eq("matricula", trimmedMatricula);
+
+      if (error) {
+        toast({ title: "Error", description: error.message, variant: "destructive" });
+        setSubmitting(false);
+        return;
+      }
+      setQrToken(token);
+      setStudentName(existing.nombre);
+      setMode("done");
+      setSubmitting(false);
       return;
     }
 
-    const fetchRegistro = async () => {
-      const { data, error: err } = await supabase
-        .from("registros_proyecto")
-        .select("qr_token, estudiantes(nombre, matricula), proyectos(nombre)")
-        .eq("qr_token", token)
-        .maybeSingle();
+    // Insert new student
+    const { error } = await supabase
+      .from("estudiantes")
+      .insert({
+        matricula: trimmedMatricula,
+        nombre: nombre.trim(),
+        correo: correo.trim(),
+        carrera: carrera.trim(),
+        qr_token: token,
+      } as any);
 
-      if (err || !data) {
-        setError("Registro no encontrado. Verifica tu enlace.");
-      } else {
-        const est = data.estudiantes as { nombre: string; matricula: string } | null;
-        const proy = data.proyectos as { nombre: string } | null;
-        setRegistro({
-          estudiante_nombre: est?.nombre ?? "—",
-          matricula: est?.matricula ?? "—",
-          proyecto_nombre: proy?.nombre ?? "—",
-          qr_token: data.qr_token!,
-        });
-      }
-      setLoading(false);
-    };
+    if (error) {
+      toast({ title: "Error", description: error.message, variant: "destructive" });
+      setSubmitting(false);
+      return;
+    }
 
-    fetchRegistro();
-  }, [token]);
+    setQrToken(token);
+    setStudentName(nombre.trim());
+    setMode("done");
+    setSubmitting(false);
+  };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  const handleLookup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLookingUp(true);
 
-  if (error || !registro) {
+    const { data, error } = await supabase
+      .from("estudiantes")
+      .select("qr_token, nombre" as any)
+      .eq("matricula", lookupMatricula.trim())
+      .maybeSingle() as { data: { qr_token: string | null; nombre: string } | null; error: any };
+
+    if (error || !data) {
+      toast({ title: "No encontrado", description: "No se encontró un estudiante con esa matrícula. Regístrate primero.", variant: "destructive" });
+      setLookingUp(false);
+      return;
+    }
+
+    if (!data.qr_token) {
+      const token = crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase();
+      await supabase.from("estudiantes").update({ qr_token: token } as any).eq("matricula", lookupMatricula.trim());
+      setQrToken(token);
+    } else {
+      setQrToken(data.qr_token);
+    }
+    setStudentName(data.nombre);
+    setMode("done");
+    setLookingUp(false);
+  };
+
+  if (mode === "done" && qrToken) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background px-4">
         <Card className="w-full max-w-sm text-center">
-          <CardContent className="space-y-4 pt-8 pb-8">
-            <AlertTriangle className="mx-auto h-12 w-12 text-destructive" />
-            <p className="text-muted-foreground">{error}</p>
+          <CardContent className="space-y-6 pt-8 pb-8">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
+              <QrCode className="h-7 w-7 text-primary" />
+            </div>
+            <div className="space-y-1">
+              <h2 className="text-xl font-bold">{studentName}</h2>
+              <p className="text-sm text-muted-foreground">Tu QR para la feria</p>
+            </div>
+            <div className="flex justify-center rounded-xl border bg-white p-4">
+              <QRCodeSVG value={qrToken} size={220} level="H" includeMargin />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Guarda una captura de pantalla. Muestra este QR al becario en la feria para confirmar tu asistencia.
+            </p>
+            <Button variant="outline" onClick={() => { setMode("choose"); setQrToken(null); }} className="w-full">
+              Volver al inicio
+            </Button>
           </CardContent>
         </Card>
       </div>
@@ -74,30 +147,72 @@ const MiQR = () => {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-sm text-center">
-        <CardContent className="space-y-6 pt-8 pb-8">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-            <QrCode className="h-7 w-7 text-primary" />
-          </div>
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <CardTitle className="text-2xl">Mi QR de Feria</CardTitle>
+          <CardDescription>
+            {mode === "choose"
+              ? "Obtén tu código QR para la feria de servicio social"
+              : mode === "register"
+              ? "Completa tus datos para generar tu QR"
+              : "Ingresa tu matrícula para ver tu QR"}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {mode === "choose" && (
+            <div className="space-y-3">
+              <Button onClick={() => setMode("register")} className="w-full" size="lg">
+                Soy nuevo — Registrarme
+              </Button>
+              <Button onClick={() => setMode("lookup")} variant="outline" className="w-full" size="lg">
+                Ya me registré — Ver mi QR
+              </Button>
+            </div>
+          )}
 
-          <div className="space-y-1">
-            <h2 className="text-xl font-bold">{registro.estudiante_nombre}</h2>
-            <p className="text-sm text-muted-foreground">{registro.matricula}</p>
-            <Badge variant="secondary" className="mt-2">{registro.proyecto_nombre}</Badge>
-          </div>
+          {mode === "register" && (
+            <form onSubmit={handleRegister} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="matricula">Matrícula</Label>
+                <Input id="matricula" value={matricula} onChange={(e) => setMatricula(e.target.value)} placeholder="Ej. A01234567" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="nombre">Nombre completo</Label>
+                <Input id="nombre" value={nombre} onChange={(e) => setNombre(e.target.value)} placeholder="Ej. Juan Pérez García" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="correo">Correo institucional</Label>
+                <Input id="correo" type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="Ej. a01234567@tec.mx" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="carrera">Carrera</Label>
+                <Input id="carrera" value={carrera} onChange={(e) => setCarrera(e.target.value)} placeholder="Ej. ITC, IDM, IMT" required />
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setMode("choose")}>Atrás</Button>
+                <Button type="submit" className="flex-1" disabled={submitting}>
+                  {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <QrCode className="mr-2 h-4 w-4" />}
+                  Generar mi QR
+                </Button>
+              </div>
+            </form>
+          )}
 
-          <div className="flex justify-center rounded-xl border bg-white p-4">
-            <QRCodeSVG
-              value={registro.qr_token}
-              size={220}
-              level="H"
-              includeMargin
-            />
-          </div>
-
-          <p className="text-xs text-muted-foreground">
-            Muestra este QR al becario el día del evento para confirmar tu asistencia.
-          </p>
+          {mode === "lookup" && (
+            <form onSubmit={handleLookup} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="lookup-matricula">Matrícula</Label>
+                <Input id="lookup-matricula" value={lookupMatricula} onChange={(e) => setLookupMatricula(e.target.value)} placeholder="Ej. A01234567" required />
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setMode("choose")}>Atrás</Button>
+                <Button type="submit" className="flex-1" disabled={lookingUp}>
+                  {lookingUp ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Ver mi QR
+                </Button>
+              </div>
+            </form>
+          )}
         </CardContent>
       </Card>
     </div>
