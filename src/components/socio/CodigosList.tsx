@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Loader2, XCircle } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -56,20 +56,20 @@ const CodigosList = ({ proyectoId, refreshKey }: Props) => {
     fetch();
   }, [proyectoId, refreshKey]);
 
-  const handleInvalidar = async (c: CodigoRow) => {
+  const handleEliminar = async (c: CodigoRow) => {
     const { error } = await supabase
       .from("codigos_temporales")
-      .update({ usado: true, usado_en: new Date().toISOString() })
+      .delete()
       .eq("codigo_id", c.codigo_id);
 
     if (error) {
       toast({ title: "Error", description: error.message, variant: "destructive" });
     } else {
-      toast({ title: "Código invalidado" });
+      toast({ title: "Código eliminado" });
       if (usuarioId) {
         await supabase.from("logs_evento").insert({
           entidad: "codigos_temporales",
-          tipo_evento: "codigo_invalidado",
+          tipo_evento: "codigo_eliminado",
           actor_usuario_id: usuarioId,
           entidad_id: c.codigo_id,
         });
@@ -109,9 +109,9 @@ const CodigosList = ({ proyectoId, refreshKey }: Props) => {
                   <Badge variant={badgeVariant[estado]}>{estado}</Badge>
                 </TableCell>
                 <TableCell className="text-right">
-                  {estado === "DISPONIBLE" && (
-                    <Button size="sm" variant="ghost" onClick={() => handleInvalidar(c)}>
-                      <XCircle className="mr-1 h-3 w-3" /> Invalidar
+                  {estado !== "USADO" && (
+                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => handleEliminar(c)}>
+                      <Trash2 className="mr-1 h-3 w-3" /> Eliminar
                     </Button>
                   )}
                 </TableCell>
