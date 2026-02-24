@@ -240,6 +240,7 @@ export type Database = {
           estudiante_id: string
           fecha_hora: string
           proyecto_id: string
+          qr_token: string | null
           registro_id: string
         }
         Insert: {
@@ -248,6 +249,7 @@ export type Database = {
           estudiante_id: string
           fecha_hora?: string
           proyecto_id: string
+          qr_token?: string | null
           registro_id?: string
         }
         Update: {
@@ -256,6 +258,7 @@ export type Database = {
           estudiante_id?: string
           fecha_hora?: string
           proyecto_id?: string
+          qr_token?: string | null
           registro_id?: string
         }
         Relationships: [

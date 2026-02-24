@@ -1,55 +1,27 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import {
   LogOut,
   ClipboardCheck,
-  Search,
   Loader2,
   CheckCircle2,
   XCircle,
-  Clock,
   AlertTriangle,
+  ScanLine,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Html5Qrcode } from "html5-qrcode";
 
-interface Estudiante {
-  estudiante_id: string;
-  matricula: string;
-  nombre: string;
-  correo: string;
-  carrera: string;
-}
-
-interface Inscripcion {
-  registro_id: string;
-  proyecto_id: string;
-  estado: string;
-  proyectos: { nombre: string } | null;
-}
-
-interface CheckinRecord {
+interface RecentCheckin {
   checkin_id: string;
   estudiante_id: string;
   proyecto_id: string | null;
   estado: "PENDIENTE" | "PRESENTE";
   fecha_hora: string;
-  verificado_por_usuario_id: string;
-}
-
-interface RecentCheckin extends CheckinRecord {
   estudiantes: { nombre: string; matricula: string } | null;
   proyectos: { nombre: string } | null;
 }
@@ -58,23 +30,18 @@ const BecarioDashboard = () => {
   const { user, usuarioId, signOut } = useAuth();
   const { toast } = useToast();
 
-  // Search
-  const [matricula, setMatricula] = useState("");
-  const [searching, setSearching] = useState(false);
-  const [estudianteFound, setEstudianteFound] = useState<Estudiante | null>(null);
-  const [notFound, setNotFound] = useState(false);
+  // Scanner
+  const [scanning, setScanning] = useState(false);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerContainerId = "qr-reader";
 
-  // Inscriptions
-  const [inscripciones, setInscripciones] = useState<Inscripcion[]>([]);
-  const [noInscripcion, setNoInscripcion] = useState(false);
-  const [selectedProyectoId, setSelectedProyectoId] = useState<string | null>(null);
-
-  // Existing checkin for selected project
-  const [existingCheckin, setExistingCheckin] = useState<CheckinRecord | null>(null);
-
-  // Actions
-  const [checkinLoading, setCheckinLoading] = useState(false);
-  const [checkinSuccess, setCheckinSuccess] = useState(false);
+  // Processing
+  const [processing, setProcessing] = useState(false);
+  const [lastResult, setLastResult] = useState<{
+    type: "success" | "error" | "warning";
+    title: string;
+    description: string;
+  } | null>(null);
 
   // Recents
   const [recents, setRecents] = useState<RecentCheckin[]>([]);
@@ -95,158 +62,142 @@ const BecarioDashboard = () => {
     fetchRecents();
   }, [fetchRecents]);
 
-  // When student found and inscriptions loaded, auto-select if only one
-  useEffect(() => {
-    if (inscripciones.length === 1) {
-      setSelectedProyectoId(inscripciones[0].proyecto_id);
-    } else {
-      setSelectedProyectoId(null);
-    }
-  }, [inscripciones]);
+  const processQrToken = useCallback(async (qrToken: string) => {
+    if (processing || !usuarioId) return;
+    setProcessing(true);
+    setLastResult(null);
 
-  // When project selected, check existing checkin
-  useEffect(() => {
-    if (!estudianteFound || !selectedProyectoId) {
-      setExistingCheckin(null);
-      return;
-    }
-    const fetchCheckin = async () => {
-      const { data } = await supabase
-        .from("checkins")
-        .select("*")
-        .eq("estudiante_id", estudianteFound.estudiante_id)
-        .eq("proyecto_id", selectedProyectoId)
-        .maybeSingle();
-      setExistingCheckin(data as CheckinRecord | null);
-    };
-    fetchCheckin();
-  }, [estudianteFound, selectedProyectoId]);
-
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = matricula.trim();
-    if (!trimmed) return;
-
-    setSearching(true);
-    resetResults();
-
-    // 1. Find student
-    const { data: est, error } = await supabase
-      .from("estudiantes")
-      .select("*")
-      .eq("matricula", trimmed)
+    // 1. Find registration by qr_token
+    const { data: reg, error: regErr } = await supabase
+      .from("registros_proyecto")
+      .select("registro_id, estudiante_id, proyecto_id, estado, estudiantes(nombre, matricula, carrera), proyectos(nombre)")
+      .eq("qr_token", qrToken)
       .maybeSingle();
 
-    if (error) {
-      toast({ title: "Error", description: error.message, variant: "destructive" });
-      setSearching(false);
+    if (regErr || !reg) {
+      setLastResult({ type: "error", title: "QR no válido", description: "No se encontró ningún registro con este código QR." });
+      setProcessing(false);
       return;
     }
 
-    if (!est) {
-      setNotFound(true);
-      setSearching(false);
+    if (reg.estado !== "CONFIRMADO") {
+      setLastResult({ type: "warning", title: "Registro cancelado", description: "Este registro fue cancelado y no se puede hacer check-in." });
+      setProcessing(false);
       return;
     }
 
-    setEstudianteFound(est as Estudiante);
+    const est = reg.estudiantes as { nombre: string; matricula: string; carrera: string } | null;
+    const proy = reg.proyectos as { nombre: string } | null;
 
-    // 2. Check inscriptions
-    const { data: regs } = await supabase
-      .from("registros_proyecto")
-      .select("registro_id, proyecto_id, estado, proyectos(nombre)")
-      .eq("estudiante_id", est.estudiante_id)
-      .eq("estado", "CONFIRMADO");
+    // 2. Check existing checkin
+    const { data: existingCheckin } = await supabase
+      .from("checkins")
+      .select("checkin_id, estado")
+      .eq("estudiante_id", reg.estudiante_id)
+      .eq("proyecto_id", reg.proyecto_id)
+      .maybeSingle();
 
-    const inscList = (regs as Inscripcion[] | null) ?? [];
-    setInscripciones(inscList);
-    if (inscList.length === 0) setNoInscripcion(true);
+    if (existingCheckin?.estado === "PRESENTE") {
+      setLastResult({
+        type: "warning",
+        title: "Ya registrado",
+        description: `${est?.nombre} (${est?.matricula}) ya está marcado como PRESENTE en ${proy?.nombre}.`,
+      });
+      setProcessing(false);
+      return;
+    }
 
-    setSearching(false);
-  };
-
-  const handleCheckin = async (estado: "PENDIENTE" | "PRESENTE") => {
-    if (!estudianteFound || !usuarioId || !selectedProyectoId) return;
-    setCheckinLoading(true);
-
+    // 3. Upsert checkin as PRESENTE
     if (existingCheckin) {
-      if (existingCheckin.estado === estado) {
-        toast({ title: "Sin cambios", description: `Ya está como ${estado}.` });
-        setCheckinLoading(false);
-        return;
-      }
-      const { error } = await supabase
+      await supabase
         .from("checkins")
-        .update({ estado, verificado_por_usuario_id: usuarioId })
+        .update({ estado: "PRESENTE", verificado_por_usuario_id: usuarioId })
         .eq("checkin_id", existingCheckin.checkin_id);
-
-      if (error) {
-        toast({ title: "Error", description: error.message, variant: "destructive" });
-        setCheckinLoading(false);
-        return;
-      }
-      setExistingCheckin({ ...existingCheckin, estado });
     } else {
-      const { data, error } = await supabase
+      await supabase
         .from("checkins")
         .insert({
-          estudiante_id: estudianteFound.estudiante_id,
-          proyecto_id: selectedProyectoId,
-          estado,
+          estudiante_id: reg.estudiante_id,
+          proyecto_id: reg.proyecto_id,
+          estado: "PRESENTE",
           verificado_por_usuario_id: usuarioId,
-        })
-        .select()
-        .single();
-
-      if (error) {
-        toast({ title: "Error", description: error.message, variant: "destructive" });
-        setCheckinLoading(false);
-        return;
-      }
-      setExistingCheckin(data as CheckinRecord);
+        });
     }
 
-    // Audit
+    // 4. Audit log
     await supabase.from("logs_evento").insert({
-      tipo_evento: "checkin_update",
+      tipo_evento: "checkin_qr",
       entidad: "checkins",
-      entidad_id: estudianteFound.estudiante_id,
+      entidad_id: reg.estudiante_id,
       actor_usuario_id: usuarioId,
       metadata: {
-        matricula: estudianteFound.matricula,
-        estudiante_nombre: estudianteFound.nombre,
-        proyecto_id: selectedProyectoId,
-        estado,
+        matricula: est?.matricula,
+        estudiante_nombre: est?.nombre,
+        proyecto_id: reg.proyecto_id,
+        estado: "PRESENTE",
+        qr_token: qrToken,
       },
     });
 
-    setCheckinSuccess(true);
-    toast({
-      title: estado === "PRESENTE" ? "✅ Presencia confirmada" : "⏳ Marcado como pendiente",
-      description: `${estudianteFound.nombre} (${estudianteFound.matricula})`,
+    setLastResult({
+      type: "success",
+      title: "✅ Presencia confirmada",
+      description: `${est?.nombre} (${est?.matricula}) — ${proy?.nombre}`,
     });
+
     fetchRecents();
-    setCheckinLoading(false);
-  };
+    setProcessing(false);
+  }, [processing, usuarioId, fetchRecents]);
 
-  const resetResults = () => {
-    setEstudianteFound(null);
-    setNotFound(false);
-    setInscripciones([]);
-    setNoInscripcion(false);
-    setSelectedProyectoId(null);
-    setExistingCheckin(null);
-    setCheckinSuccess(false);
-  };
+  const startScanner = useCallback(async () => {
+    if (scannerRef.current) return;
+    setLastResult(null);
 
-  const resetSearch = () => {
-    setMatricula("");
-    resetResults();
-  };
+    const scanner = new Html5Qrcode(scannerContainerId);
+    scannerRef.current = scanner;
+    setScanning(true);
 
-  const selectedProyectoNombre = inscripciones.find(
-    (i) => i.proyecto_id === selectedProyectoId
-  )?.proyectos?.nombre;
+    try {
+      await scanner.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        async (decodedText) => {
+          // Stop scanner immediately after reading
+          try {
+            await scanner.stop();
+            scannerRef.current = null;
+            setScanning(false);
+          } catch { /* ignore */ }
+          processQrToken(decodedText.trim());
+        },
+        () => { /* ignore scan failures */ }
+      );
+    } catch (err: unknown) {
+      setScanning(false);
+      scannerRef.current = null;
+      const message = err instanceof Error ? err.message : "No se pudo acceder a la cámara";
+      toast({ title: "Error de cámara", description: message, variant: "destructive" });
+    }
+  }, [processQrToken, toast]);
+
+  const stopScanner = useCallback(async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+      } catch { /* ignore */ }
+      scannerRef.current = null;
+    }
+    setScanning(false);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (scannerRef.current) {
+        try { scannerRef.current.stop(); } catch { /* ignore */ }
+      }
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-background">
@@ -255,7 +206,7 @@ const BecarioDashboard = () => {
         <div className="container mx-auto flex items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary">
-              <ClipboardCheck className="h-5 w-5 text-primary-foreground" />
+              <ScanLine className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
               <h1 className="text-lg font-bold">Panel de Becario</h1>
@@ -268,145 +219,75 @@ const BecarioDashboard = () => {
         </div>
       </header>
 
-      <main className="container mx-auto space-y-8 px-6 py-10">
-        {/* Search & Check-in */}
+      <main className="container mx-auto space-y-6 px-6 py-8">
+        {/* QR Scanner */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Search className="h-5 w-5 text-primary" />
-              Check-in de Asistencia
+              <ScanLine className="h-5 w-5 text-primary" />
+              Escanear QR de estudiante
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Search form */}
-            <form onSubmit={handleSearch} className="flex gap-3">
-              <div className="flex-1">
-                <Label htmlFor="matricula" className="sr-only">Matrícula</Label>
-                <Input
-                  id="matricula"
-                  placeholder="Ingresa matrícula del estudiante"
-                  value={matricula}
-                  onChange={(e) => setMatricula(e.target.value)}
-                  disabled={searching}
-                />
-              </div>
-              <Button type="submit" disabled={searching || !matricula.trim()}>
-                {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <><Search className="mr-2 h-4 w-4" /> Buscar</>}
+          <CardContent className="space-y-4">
+            {/* Scanner viewport */}
+            <div
+              id={scannerContainerId}
+              className={`mx-auto w-full max-w-sm overflow-hidden rounded-xl border-2 border-dashed border-border ${
+                scanning ? "border-primary" : ""
+              }`}
+              style={{ minHeight: scanning ? 300 : 0 }}
+            />
+
+            {!scanning && !processing && (
+              <Button onClick={startScanner} className="w-full" size="lg">
+                <ScanLine className="mr-2 h-5 w-5" />
+                Abrir cámara y escanear
               </Button>
-              {(estudianteFound || notFound) && (
-                <Button type="button" variant="ghost" onClick={resetSearch}>
-                  Limpiar
-                </Button>
-              )}
-            </form>
+            )}
 
-            {/* Not found */}
-            {notFound && (
-              <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
-                <div className="flex items-center gap-2 text-destructive">
-                  <XCircle className="h-5 w-5" />
-                  <span className="font-semibold">Estudiante no encontrado</span>
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  No se encontró un estudiante con matrícula "{matricula}". Debe registrarse primero en /registro.
-                </p>
+            {scanning && (
+              <Button variant="outline" onClick={stopScanner} className="w-full">
+                Detener cámara
+              </Button>
+            )}
+
+            {processing && (
+              <div className="flex items-center justify-center gap-2 py-4">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                <span className="text-sm text-muted-foreground">Procesando check-in…</span>
               </div>
             )}
 
-            {/* No inscription */}
-            {estudianteFound && noInscripcion && (
-              <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4">
-                <div className="flex items-center gap-2 text-yellow-700">
-                  <AlertTriangle className="h-5 w-5" />
-                  <span className="font-semibold">Sin inscripción a proyectos</span>
-                </div>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {estudianteFound.nombre} ({estudianteFound.matricula}) no está inscrito a ningún proyecto.
-                  No se puede registrar asistencia.
-                </p>
-              </div>
-            )}
-
-            {/* Student found with inscriptions */}
-            {estudianteFound && inscripciones.length > 0 && (
-              <div className="space-y-4">
-                {/* Student info */}
-                <div className="rounded-lg border bg-card p-4">
-                  <p className="font-semibold text-lg">{estudianteFound.nombre}</p>
-                  <p className="text-sm text-muted-foreground">
-                    {estudianteFound.matricula} · {estudianteFound.carrera}
-                  </p>
-                </div>
-
-                {/* Project selection */}
-                {inscripciones.length === 1 ? (
-                  <div className="rounded-lg border bg-muted/30 p-3">
-                    <p className="text-sm font-medium">Proyecto: {inscripciones[0].proyectos?.nombre ?? "—"}</p>
-                  </div>
+            {/* Result */}
+            {lastResult && (
+              <div
+                className={`rounded-lg border p-4 flex items-start gap-3 ${
+                  lastResult.type === "success"
+                    ? "border-green-500/30 bg-green-500/5 text-green-700"
+                    : lastResult.type === "warning"
+                    ? "border-yellow-500/30 bg-yellow-500/5 text-yellow-700"
+                    : "border-destructive/30 bg-destructive/5 text-destructive"
+                }`}
+              >
+                {lastResult.type === "success" ? (
+                  <CheckCircle2 className="mt-0.5 h-5 w-5 flex-shrink-0" />
+                ) : lastResult.type === "warning" ? (
+                  <AlertTriangle className="mt-0.5 h-5 w-5 flex-shrink-0" />
                 ) : (
-                  <div className="space-y-2">
-                    <Label>Selecciona el proyecto</Label>
-                    <Select value={selectedProyectoId ?? ""} onValueChange={setSelectedProyectoId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Elige un proyecto" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inscripciones.map((insc) => (
-                          <SelectItem key={insc.proyecto_id} value={insc.proyecto_id}>
-                            {insc.proyectos?.nombre ?? insc.proyecto_id}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
                 )}
-
-                {/* Current status */}
-                {selectedProyectoId && existingCheckin && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">Estado actual:</span>
-                    <Badge variant={existingCheckin.estado === "PRESENTE" ? "default" : "secondary"}>
-                      {existingCheckin.estado === "PRESENTE" ? (
-                        <><CheckCircle2 className="mr-1 h-3 w-3" /> Presente</>
-                      ) : (
-                        <><Clock className="mr-1 h-3 w-3" /> Pendiente</>
-                      )}
-                    </Badge>
-                  </div>
-                )}
-
-                {/* Success message */}
-                {checkinSuccess && (
-                  <div className="rounded-lg border border-green-500/30 bg-green-500/5 p-4 flex items-center gap-2 text-green-700">
-                    <CheckCircle2 className="h-5 w-5" />
-                    <span className="font-medium">Check-in actualizado correctamente</span>
-                  </div>
-                )}
-
-                {/* Action buttons */}
-                {selectedProyectoId && (
-                  <div className="flex gap-3">
-                    <Button
-                      onClick={() => handleCheckin("PRESENTE")}
-                      disabled={checkinLoading}
-                      className="flex-1"
-                    >
-                      {checkinLoading ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <><CheckCircle2 className="mr-2 h-4 w-4" /> Marcar PRESENTE</>
-                      )}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => handleCheckin("PENDIENTE")}
-                      disabled={checkinLoading}
-                    >
-                      <Clock className="mr-2 h-4 w-4" /> Pendiente
-                    </Button>
-                  </div>
-                )}
+                <div>
+                  <p className="font-semibold">{lastResult.title}</p>
+                  <p className="text-sm opacity-80">{lastResult.description}</p>
+                </div>
               </div>
+            )}
+
+            {lastResult && !scanning && !processing && (
+              <Button onClick={startScanner} variant="outline" className="w-full">
+                <ScanLine className="mr-2 h-4 w-4" />
+                Escanear otro
+              </Button>
             )}
           </CardContent>
         </Card>

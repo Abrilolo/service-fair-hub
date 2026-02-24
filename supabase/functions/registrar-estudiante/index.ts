@@ -139,13 +139,16 @@ Deno.serve(async (req) => {
       );
     }
 
-    // --- Step 5: Insert registration ---
+    // --- Step 5: Generate QR token and insert registration ---
+    const qrToken = crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase();
+
     const { error: regErr } = await admin
       .from("registros_proyecto")
       .insert({
         estudiante_id: estudianteId,
         proyecto_id: proyectoId,
         codigo_id: codigoId,
+        qr_token: qrToken,
       });
 
     if (regErr) {
@@ -207,6 +210,7 @@ Deno.serve(async (req) => {
         success: true,
         message: "¡Tu lugar está apartado!",
         proyecto_nombre: proyecto.nombre,
+        qr_token: qrToken,
       }),
       { status: 201, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
