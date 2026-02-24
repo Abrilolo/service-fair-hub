@@ -12,25 +12,17 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { codigo, matricula, nombre, correo, carrera } = await req.json();
+    const { codigo, matricula } = await req.json();
 
     // --- Input validation ---
-    if (!codigo || !matricula || !nombre || !correo || !carrera) {
+    if (!codigo || !matricula) {
       return new Response(
-        JSON.stringify({ error: "Todos los campos son requeridos" }),
+        JSON.stringify({ error: "Código y matrícula son requeridos" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(correo)) {
-      return new Response(
-        JSON.stringify({ error: "Correo electrónico inválido" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (matricula.length < 3 || matricula.length > 20) {
+    if (typeof matricula !== "string" || matricula.trim().length < 3 || matricula.trim().length > 20) {
       return new Response(
         JSON.stringify({ error: "Matrícula inválida" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -94,20 +86,24 @@ Deno.serve(async (req) => {
       );
     }
 
-    // --- Step 3: Upsert student ---
+    // --- Step 3: Find existing student (must be pre-registered by becario) ---
     const { data: estudiante, error: estErr } = await admin
       .from("estudiantes")
-      .upsert(
-        { matricula: matricula.trim(), nombre: nombre.trim(), correo: correo.trim().toLowerCase(), carrera: carrera.trim() },
-        { onConflict: "matricula" }
-      )
-      .select("estudiante_id")
-      .single();
+      .select("estudiante_id, nombre")
+      .eq("matricula", matricula.trim())
+      .maybeSingle();
 
-    if (estErr || !estudiante) {
+    if (estErr) {
       return new Response(
-        JSON.stringify({ error: "Error al registrar estudiante: " + (estErr?.message || "desconocido") }),
+        JSON.stringify({ error: "Error al buscar estudiante: " + estErr.message }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!estudiante) {
+      return new Response(
+        JSON.stringify({ error: "Matrícula no encontrada. Debes registrarte primero con un becario en la feria." }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 

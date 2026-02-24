@@ -24,9 +24,6 @@ const RegistroPublico = () => {
 
   // Step 2: Student form
   const [matricula, setMatricula] = useState("");
-  const [nombre, setNombre] = useState("");
-  const [correo, setCorreo] = useState("");
-  const [carrera, setCarrera] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   // Step 3: Success
@@ -78,9 +75,6 @@ const RegistroPublico = () => {
         body: {
           codigo: codigo.trim().toUpperCase(),
           matricula: matricula.trim(),
-          nombre: nombre.trim(),
-          correo: correo.trim().toLowerCase(),
-          carrera: carrera.trim(),
         },
       });
 
@@ -103,9 +97,6 @@ const RegistroPublico = () => {
     setCodigo("");
     setProyecto(null);
     setMatricula("");
-    setNombre("");
-    setCorreo("");
-    setCarrera("");
     setSuccess(null);
   };
 
@@ -190,40 +181,9 @@ const RegistroPublico = () => {
                     maxLength={20}
                     required
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="nombre">Nombre completo</Label>
-                  <Input
-                    id="nombre"
-                    value={nombre}
-                    onChange={(e) => setNombre(e.target.value)}
-                    placeholder="Tu nombre completo"
-                    maxLength={100}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="correo">Correo electrónico</Label>
-                  <Input
-                    id="correo"
-                    type="email"
-                    value={correo}
-                    onChange={(e) => setCorreo(e.target.value)}
-                    placeholder="tu@correo.com"
-                    maxLength={255}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="carrera">Carrera</Label>
-                  <Input
-                    id="carrera"
-                    value={carrera}
-                    onChange={(e) => setCarrera(e.target.value)}
-                    placeholder="Ej. Ingeniería en Sistemas"
-                    maxLength={100}
-                    required
-                  />
+                  <p className="text-xs text-muted-foreground">
+                    Debes haberte registrado previamente con un becario en la feria.
+                  </p>
                 </div>
                 <div className="flex gap-2">
                   <Button type="button" variant="outline" onClick={handleReset} className="flex-shrink-0">
