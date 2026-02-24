@@ -6,16 +6,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   LogOut,
   ClipboardCheck,
   Search,
-  UserPlus,
   Loader2,
   CheckCircle2,
   XCircle,
   Clock,
+  AlertTriangle,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -27,54 +33,61 @@ interface Estudiante {
   carrera: string;
 }
 
-interface Checkin {
+interface Inscripcion {
+  registro_id: string;
+  proyecto_id: string;
+  estado: string;
+  proyectos: { nombre: string } | null;
+}
+
+interface CheckinRecord {
   checkin_id: string;
-  fecha_hora: string;
-  estado: "PENDIENTE" | "PRESENTE";
   estudiante_id: string;
+  proyecto_id: string | null;
+  estado: "PENDIENTE" | "PRESENTE";
+  fecha_hora: string;
   verificado_por_usuario_id: string;
 }
 
-interface CheckinWithStudent extends Checkin {
+interface RecentCheckin extends CheckinRecord {
   estudiantes: { nombre: string; matricula: string } | null;
+  proyectos: { nombre: string } | null;
 }
 
 const BecarioDashboard = () => {
   const { user, usuarioId, signOut } = useAuth();
   const { toast } = useToast();
 
-  // Search state
+  // Search
   const [matricula, setMatricula] = useState("");
   const [searching, setSearching] = useState(false);
   const [estudianteFound, setEstudianteFound] = useState<Estudiante | null>(null);
   const [notFound, setNotFound] = useState(false);
 
-  // Existing checkin for found student
-  const [existingCheckin, setExistingCheckin] = useState<Checkin | null>(null);
+  // Inscriptions
+  const [inscripciones, setInscripciones] = useState<Inscripcion[]>([]);
+  const [noInscripcion, setNoInscripcion] = useState(false);
+  const [selectedProyectoId, setSelectedProyectoId] = useState<string | null>(null);
 
-  // Create student dialog
-  const [createOpen, setCreateOpen] = useState(false);
-  const [newNombre, setNewNombre] = useState("");
-  const [newCorreo, setNewCorreo] = useState("");
-  const [newCarrera, setNewCarrera] = useState("");
-  const [creating, setCreating] = useState(false);
+  // Existing checkin for selected project
+  const [existingCheckin, setExistingCheckin] = useState<CheckinRecord | null>(null);
 
-  // Checkin action
+  // Actions
   const [checkinLoading, setCheckinLoading] = useState(false);
   const [checkinSuccess, setCheckinSuccess] = useState(false);
 
-  // Recent checkins
-  const [recents, setRecents] = useState<CheckinWithStudent[]>([]);
+  // Recents
+  const [recents, setRecents] = useState<RecentCheckin[]>([]);
   const [recentsLoading, setRecentsLoading] = useState(true);
 
   const fetchRecents = useCallback(async () => {
     setRecentsLoading(true);
     const { data } = await supabase
       .from("checkins")
-      .select("*, estudiantes(nombre, matricula)")
+      .select("*, estudiantes(nombre, matricula), proyectos(nombre)")
       .order("fecha_hora", { ascending: false })
-      .limit(10);
-    setRecents((data as CheckinWithStudent[] | null) ?? []);
+      .limit(20);
+    setRecents((data as RecentCheckin[] | null) ?? []);
     setRecentsLoading(false);
   }, []);
 
@@ -82,18 +95,43 @@ const BecarioDashboard = () => {
     fetchRecents();
   }, [fetchRecents]);
 
+  // When student found and inscriptions loaded, auto-select if only one
+  useEffect(() => {
+    if (inscripciones.length === 1) {
+      setSelectedProyectoId(inscripciones[0].proyecto_id);
+    } else {
+      setSelectedProyectoId(null);
+    }
+  }, [inscripciones]);
+
+  // When project selected, check existing checkin
+  useEffect(() => {
+    if (!estudianteFound || !selectedProyectoId) {
+      setExistingCheckin(null);
+      return;
+    }
+    const fetchCheckin = async () => {
+      const { data } = await supabase
+        .from("checkins")
+        .select("*")
+        .eq("estudiante_id", estudianteFound.estudiante_id)
+        .eq("proyecto_id", selectedProyectoId)
+        .maybeSingle();
+      setExistingCheckin(data as CheckinRecord | null);
+    };
+    fetchCheckin();
+  }, [estudianteFound, selectedProyectoId]);
+
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = matricula.trim();
     if (!trimmed) return;
 
     setSearching(true);
-    setEstudianteFound(null);
-    setNotFound(false);
-    setExistingCheckin(null);
-    setCheckinSuccess(false);
+    resetResults();
 
-    const { data, error } = await supabase
+    // 1. Find student
+    const { data: est, error } = await supabase
       .from("estudiantes")
       .select("*")
       .eq("matricula", trimmed)
@@ -105,72 +143,38 @@ const BecarioDashboard = () => {
       return;
     }
 
-    if (!data) {
+    if (!est) {
       setNotFound(true);
       setSearching(false);
       return;
     }
 
-    setEstudianteFound(data as Estudiante);
-    // Check if there's already a checkin for this student
-    const { data: ck } = await supabase
-      .from("checkins")
-      .select("*")
-      .eq("estudiante_id", data.estudiante_id)
-      .maybeSingle();
+    setEstudianteFound(est as Estudiante);
 
-    if (ck) setExistingCheckin(ck as Checkin);
+    // 2. Check inscriptions
+    const { data: regs } = await supabase
+      .from("registros_proyecto")
+      .select("registro_id, proyecto_id, estado, proyectos(nombre)")
+      .eq("estudiante_id", est.estudiante_id)
+      .eq("estado", "CONFIRMADO");
+
+    const inscList = (regs as Inscripcion[] | null) ?? [];
+    setInscripciones(inscList);
+    if (inscList.length === 0) setNoInscripcion(true);
+
     setSearching(false);
   };
 
-  const handleCreateEstudiante = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = matricula.trim();
-    if (!trimmed) return;
-    setCreating(true);
-
-    const { data, error } = await supabase
-      .from("estudiantes")
-      .insert({
-        matricula: trimmed,
-        nombre: newNombre.trim() || "Sin nombre",
-        correo: newCorreo.trim() || `${trimmed}@placeholder.com`,
-        carrera: newCarrera.trim() || "No especificada",
-      })
-      .select()
-      .single();
-
-    if (error) {
-      toast({
-        title: "Error al crear estudiante",
-        description: error.message,
-        variant: "destructive",
-      });
-      setCreating(false);
-      return;
-    }
-
-    setEstudianteFound(data as Estudiante);
-    setNotFound(false);
-    setCreateOpen(false);
-    setNewNombre("");
-    setNewCorreo("");
-    setNewCarrera("");
-    toast({ title: "Estudiante creado", description: `Matrícula: ${trimmed}` });
-    setCreating(false);
-  };
-
   const handleCheckin = async (estado: "PENDIENTE" | "PRESENTE") => {
-    if (!estudianteFound || !usuarioId) return;
+    if (!estudianteFound || !usuarioId || !selectedProyectoId) return;
     setCheckinLoading(true);
 
     if (existingCheckin) {
       if (existingCheckin.estado === estado) {
-        toast({ title: "Sin cambios", description: `El estudiante ya está como ${estado}.` });
+        toast({ title: "Sin cambios", description: `Ya está como ${estado}.` });
         setCheckinLoading(false);
         return;
       }
-      // Update existing
       const { error } = await supabase
         .from("checkins")
         .update({ estado, verificado_por_usuario_id: usuarioId })
@@ -183,11 +187,11 @@ const BecarioDashboard = () => {
       }
       setExistingCheckin({ ...existingCheckin, estado });
     } else {
-      // Insert new
       const { data, error } = await supabase
         .from("checkins")
         .insert({
           estudiante_id: estudianteFound.estudiante_id,
+          proyecto_id: selectedProyectoId,
           estado,
           verificado_por_usuario_id: usuarioId,
         })
@@ -199,41 +203,54 @@ const BecarioDashboard = () => {
         setCheckinLoading(false);
         return;
       }
-      setExistingCheckin(data as Checkin);
+      setExistingCheckin(data as CheckinRecord);
     }
 
-    // Audit log
+    // Audit
     await supabase.from("logs_evento").insert({
-      tipo_evento: "CHECKIN",
+      tipo_evento: "checkin_update",
       entidad: "checkins",
       entidad_id: estudianteFound.estudiante_id,
       actor_usuario_id: usuarioId,
       metadata: {
         matricula: estudianteFound.matricula,
-        estado,
         estudiante_nombre: estudianteFound.nombre,
+        proyecto_id: selectedProyectoId,
+        estado,
       },
     });
 
     setCheckinSuccess(true);
     toast({
-      title: estado === "PRESENTE" ? "✅ Check-in registrado" : "⏳ Marcado como pendiente",
+      title: estado === "PRESENTE" ? "✅ Presencia confirmada" : "⏳ Marcado como pendiente",
       description: `${estudianteFound.nombre} (${estudianteFound.matricula})`,
     });
     fetchRecents();
     setCheckinLoading(false);
   };
 
-  const resetSearch = () => {
-    setMatricula("");
+  const resetResults = () => {
     setEstudianteFound(null);
     setNotFound(false);
+    setInscripciones([]);
+    setNoInscripcion(false);
+    setSelectedProyectoId(null);
     setExistingCheckin(null);
     setCheckinSuccess(false);
   };
 
+  const resetSearch = () => {
+    setMatricula("");
+    resetResults();
+  };
+
+  const selectedProyectoNombre = inscripciones.find(
+    (i) => i.proyecto_id === selectedProyectoId
+  )?.proyectos?.nombre;
+
   return (
     <div className="min-h-screen bg-background">
+      {/* Header */}
       <header className="border-b border-border bg-card">
         <div className="container mx-auto flex items-center justify-between px-6 py-4">
           <div className="flex items-center gap-3">
@@ -252,12 +269,12 @@ const BecarioDashboard = () => {
       </header>
 
       <main className="container mx-auto space-y-8 px-6 py-10">
-        {/* Search / Check-in Card */}
+        {/* Search & Check-in */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Search className="h-5 w-5 text-primary" />
-              Check-in de Estudiantes
+              Check-in de Asistencia
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -291,43 +308,74 @@ const BecarioDashboard = () => {
                   <span className="font-semibold">Estudiante no encontrado</span>
                 </div>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  No se encontró un estudiante con matrícula "{matricula}".
+                  No se encontró un estudiante con matrícula "{matricula}". Debe registrarse primero en /registro.
                 </p>
-                <Button
-                  size="sm"
-                  className="mt-3"
-                  onClick={() => setCreateOpen(true)}
-                >
-                  <UserPlus className="mr-2 h-4 w-4" /> Registrar estudiante
-                </Button>
               </div>
             )}
 
-            {/* Student found */}
-            {estudianteFound && (
+            {/* No inscription */}
+            {estudianteFound && noInscripcion && (
+              <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/5 p-4">
+                <div className="flex items-center gap-2 text-yellow-700">
+                  <AlertTriangle className="h-5 w-5" />
+                  <span className="font-semibold">Sin inscripción a proyectos</span>
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {estudianteFound.nombre} ({estudianteFound.matricula}) no está inscrito a ningún proyecto.
+                  No se puede registrar asistencia.
+                </p>
+              </div>
+            )}
+
+            {/* Student found with inscriptions */}
+            {estudianteFound && inscripciones.length > 0 && (
               <div className="space-y-4">
+                {/* Student info */}
                 <div className="rounded-lg border bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-lg">{estudianteFound.nombre}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {estudianteFound.matricula} · {estudianteFound.carrera}
-                      </p>
-                      <p className="text-sm text-muted-foreground">{estudianteFound.correo}</p>
-                    </div>
-                    {existingCheckin && (
-                      <Badge variant={existingCheckin.estado === "PRESENTE" ? "default" : "secondary"}>
-                        {existingCheckin.estado === "PRESENTE" ? (
-                          <><CheckCircle2 className="mr-1 h-3 w-3" /> Presente</>
-                        ) : (
-                          <><Clock className="mr-1 h-3 w-3" /> Pendiente</>
-                        )}
-                      </Badge>
-                    )}
-                  </div>
+                  <p className="font-semibold text-lg">{estudianteFound.nombre}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {estudianteFound.matricula} · {estudianteFound.carrera}
+                  </p>
                 </div>
 
-                {/* Checkin success */}
+                {/* Project selection */}
+                {inscripciones.length === 1 ? (
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="text-sm font-medium">Proyecto: {inscripciones[0].proyectos?.nombre ?? "—"}</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label>Selecciona el proyecto</Label>
+                    <Select value={selectedProyectoId ?? ""} onValueChange={setSelectedProyectoId}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Elige un proyecto" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {inscripciones.map((insc) => (
+                          <SelectItem key={insc.proyecto_id} value={insc.proyecto_id}>
+                            {insc.proyectos?.nombre ?? insc.proyecto_id}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+
+                {/* Current status */}
+                {selectedProyectoId && existingCheckin && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Estado actual:</span>
+                    <Badge variant={existingCheckin.estado === "PRESENTE" ? "default" : "secondary"}>
+                      {existingCheckin.estado === "PRESENTE" ? (
+                        <><CheckCircle2 className="mr-1 h-3 w-3" /> Presente</>
+                      ) : (
+                        <><Clock className="mr-1 h-3 w-3" /> Pendiente</>
+                      )}
+                    </Badge>
+                  </div>
+                )}
+
+                {/* Success message */}
                 {checkinSuccess && (
                   <div className="rounded-lg border border-green-500/30 bg-green-500/5 p-4 flex items-center gap-2 text-green-700">
                     <CheckCircle2 className="h-5 w-5" />
@@ -336,26 +384,28 @@ const BecarioDashboard = () => {
                 )}
 
                 {/* Action buttons */}
-                <div className="flex gap-3">
-                  <Button
-                    onClick={() => handleCheckin("PRESENTE")}
-                    disabled={checkinLoading}
-                    className="flex-1"
-                  >
-                    {checkinLoading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <><CheckCircle2 className="mr-2 h-4 w-4" /> Marcar PRESENTE</>
-                    )}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => handleCheckin("PENDIENTE")}
-                    disabled={checkinLoading}
-                  >
-                    <Clock className="mr-2 h-4 w-4" /> Pendiente
-                  </Button>
-                </div>
+                {selectedProyectoId && (
+                  <div className="flex gap-3">
+                    <Button
+                      onClick={() => handleCheckin("PRESENTE")}
+                      disabled={checkinLoading}
+                      className="flex-1"
+                    >
+                      {checkinLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <><CheckCircle2 className="mr-2 h-4 w-4" /> Marcar PRESENTE</>
+                      )}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      onClick={() => handleCheckin("PENDIENTE")}
+                      disabled={checkinLoading}
+                    >
+                      <Clock className="mr-2 h-4 w-4" /> Pendiente
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>
@@ -391,7 +441,7 @@ const BecarioDashboard = () => {
                         {ck.estudiantes?.nombre ?? "Desconocido"}
                       </p>
                       <p className="text-sm text-muted-foreground">
-                        {ck.estudiantes?.matricula ?? "—"} ·{" "}
+                        {ck.estudiantes?.matricula ?? "—"} · {ck.proyectos?.nombre ?? "Sin proyecto"} ·{" "}
                         {new Date(ck.fecha_hora).toLocaleString("es-MX", {
                           dateStyle: "short",
                           timeStyle: "short",
@@ -407,49 +457,6 @@ const BecarioDashboard = () => {
             )}
           </CardContent>
         </Card>
-
-        {/* Create student dialog */}
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Registrar nuevo estudiante</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleCreateEstudiante} className="space-y-4">
-              <div className="space-y-2">
-                <Label>Matrícula</Label>
-                <Input value={matricula} disabled />
-              </div>
-              <div className="space-y-2">
-                <Label>Nombre</Label>
-                <Input
-                  value={newNombre}
-                  onChange={(e) => setNewNombre(e.target.value)}
-                  placeholder="Nombre completo (opcional)"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Correo</Label>
-                <Input
-                  type="email"
-                  value={newCorreo}
-                  onChange={(e) => setNewCorreo(e.target.value)}
-                  placeholder="correo@ejemplo.com (opcional)"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Carrera</Label>
-                <Input
-                  value={newCarrera}
-                  onChange={(e) => setNewCarrera(e.target.value)}
-                  placeholder="Carrera (opcional)"
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={creating}>
-                {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : "Registrar estudiante"}
-              </Button>
-            </form>
-          </DialogContent>
-        </Dialog>
       </main>
     </div>
   );

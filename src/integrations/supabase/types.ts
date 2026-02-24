@@ -20,6 +20,7 @@ export type Database = {
           estado: Database["public"]["Enums"]["checkin_estado"]
           estudiante_id: string
           fecha_hora: string
+          proyecto_id: string | null
           verificado_por_usuario_id: string
         }
         Insert: {
@@ -27,6 +28,7 @@ export type Database = {
           estado?: Database["public"]["Enums"]["checkin_estado"]
           estudiante_id: string
           fecha_hora?: string
+          proyecto_id?: string | null
           verificado_por_usuario_id: string
         }
         Update: {
@@ -34,6 +36,7 @@ export type Database = {
           estado?: Database["public"]["Enums"]["checkin_estado"]
           estudiante_id?: string
           fecha_hora?: string
+          proyecto_id?: string | null
           verificado_por_usuario_id?: string
         }
         Relationships: [
@@ -43,6 +46,13 @@ export type Database = {
             isOneToOne: true
             referencedRelation: "estudiantes"
             referencedColumns: ["estudiante_id"]
+          },
+          {
+            foreignKeyName: "checkins_proyecto_id_fkey"
+            columns: ["proyecto_id"]
+            isOneToOne: false
+            referencedRelation: "proyectos"
+            referencedColumns: ["proyecto_id"]
           },
           {
             foreignKeyName: "checkins_verificado_por_usuario_id_fkey"
